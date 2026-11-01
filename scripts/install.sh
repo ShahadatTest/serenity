@@ -13,6 +13,8 @@ set -eu
 
 REPO="mukkund1996/serenity"
 INSTALL_DIR="${SERENITY_INSTALL_DIR:-$HOME/.local/bin}"
+# The user's PATH, before installing Claude Code adds ~/.local/bin to ours.
+USER_PATH="$PATH"
 
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
 warn() { printf '\033[33m! %s\033[0m\n' "$*" >&2; }
@@ -73,11 +75,24 @@ tmux_ok() {
 	[ "${1:-0}" -gt 3 ] || { [ "${1:-0}" -eq 3 ] && [ "${2:-0}" -ge 2 ]; }
 }
 
+install_homebrew() {
+	say "Installing Homebrew (for tmux and gh)"
+	brew_installer=$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh) || return 1
+	# Our stdin is /dev/null (see below), so Homebrew would run non-interactively
+	# and could not ask for the sudo password it needs. Give it the terminal.
+	if (exec </dev/tty) 2>/dev/null; then
+		/bin/bash -c "$brew_installer" </dev/tty || return 1
+	else
+		/bin/bash -c "$brew_installer" || return 1
+	fi
+	brew_shellenv
+}
+
 install_tools() {
-	if [ "$os" = darwin ] && ! has brew && ! brew_shellenv; then
-		say "Installing Homebrew (for tmux and gh)"
-		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-		brew_shellenv || die "Homebrew did not install"
+	# Homebrew only if something is missing: it no longer installs on Intel Macs,
+	# where tmux can come from MacPorts instead.
+	if [ "$os" = darwin ] && { ! tmux_ok || ! has git || ! has gh; } && ! has brew && ! brew_shellenv; then
+		install_homebrew || warn "Homebrew did not install (it no longer supports Intel Macs); install tmux 3.2+ and gh another way, such as MacPorts"
 	fi
 
 	missing=""
@@ -133,13 +148,15 @@ install_serenity() {
 	say "Installed $INSTALL_DIR/serenity ($("$INSTALL_DIR/serenity" version))"
 }
 
-[ "${SERENITY_NO_DEPS:-}" = 1 ] || install_tools
+# Under `curl | sh` the rest of this script is on stdin: a package manager or
+# installer that reads stdin would swallow it, and sh would exit 0 halfway.
+[ "${SERENITY_NO_DEPS:-}" = 1 ] || install_tools </dev/null
 install_serenity
 
 echo
 "$INSTALL_DIR/serenity" doctor || true
 echo
-case ":$PATH:" in
+case ":$USER_PATH:" in
 	*":$INSTALL_DIR:"*) ;;
 	*) warn "$INSTALL_DIR is not on your PATH; add it to your shell profile: export PATH=\"$INSTALL_DIR:\$PATH\"" ;;
 esac
